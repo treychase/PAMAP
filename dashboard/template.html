@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wearable Strain &middot; Trey Chase</title>
+<meta name="description" content="Clustering wearable accelerometer and heart-rate windows into active, static and recovery states, and predicting each person's cardiovascular strain from movement alone.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231F5C43'/%3E%3Ctext x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='16' font-weight='bold' fill='%23ECEFE6' text-anchor='middle'%3ETC%3C/text%3E%3C/svg%3E">
+<style>
+:root{
+  --paper:#ECEFE6;--panel:#E3E7DB;--ink:#14201B;--muted:#4B5A52;
+  --field:#1F5C43;--field-deep:#153F2E;--gold:#DFA22C;--gold-deep:#A9741A;
+  --line:rgba(20,32,27,.16);--line-soft:rgba(20,32,27,.08);
+  /* The three discovered states. Validated as a categorical set against this
+     page's surface: all pairs clear the CVD and normal-vision separation
+     floors, and every mark that uses them is also directly labelled. */
+  --active:#eb6834;--static:#2a78d6;--recovery:#1baf7a;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans)}
+.bar{position:sticky;top:0;z-index:20;background:var(--field);border-bottom:1px solid var(--field-deep);
+  display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 22px;
+  font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase}
+.bar a{color:rgba(236,239,230,.75);text-decoration:none}
+.bar a:hover{color:var(--paper)}
+.bar .who{color:var(--paper);font-weight:500}
+main{max-width:1120px;margin:0 auto;padding:22px}
+h1{font-size:clamp(1.3rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0 0 6px;text-transform:uppercase}
+h2{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--field);
+   margin:0 0 10px;font-weight:700}
+.sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 18px}
+p.intro{font-size:16px;line-height:1.6;max-width:70ch;margin:0 0 20px}
+.people{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 6px}
+.people button{appearance:none;cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  padding:8px 13px;border-radius:999px;border:1px solid var(--line);background:var(--paper);color:var(--ink)}
+.people button:hover{border-color:var(--field);color:var(--field)}
+.people button.on{background:var(--field);border-color:var(--field);color:var(--paper)}
+.who-line{font-family:var(--mono);font-size:11px;letter-spacing:.09em;color:var(--muted);margin:0 0 18px}
+.panel{border:1px solid var(--line);background:var(--paper);padding:16px 18px;margin-bottom:18px}
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.25fr);gap:22px;align-items:start}
+@media (max-width:840px){.hero{grid-template-columns:minmax(0,1fr)}}
+.big{font-family:var(--mono);font-weight:700;letter-spacing:-.02em;line-height:1;font-size:clamp(2.6rem,7vw,3.6rem)}
+.big.pred{color:var(--field)} .big.obs{color:var(--ink)}
+.big .of{font-size:.32em;letter-spacing:.12em;color:var(--muted);font-weight:400}
+.cap{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 7px}
+.note-sm{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px;line-height:1.6}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:840px){.grid2{grid-template-columns:minmax(0,1fr)}}
+svg{display:block;width:100%;height:auto;overflow:visible}
+table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12px}
+th{text-align:left;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+   font-weight:500;padding:0 6px 7px;border-bottom:1px solid var(--line)}
+td{padding:6px;border-bottom:1px solid var(--line-soft)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.dot{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:7px;vertical-align:-1px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:10px 0 0;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.swatch{width:14px;height:10px;border-radius:2px;display:inline-block}
+.swatch.line{height:3px;border-radius:2px}
+.tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .1s ease;background:var(--ink);color:var(--paper);
+  font-family:var(--mono);font-size:11px;padding:8px 10px;border-radius:4px;z-index:50;line-height:1.6;white-space:nowrap}
+.tip b{color:var(--gold);font-weight:700}
+.note{border-left:3px solid var(--gold);background:rgba(223,162,44,.1);padding:14px 16px;margin:24px 0 0;
+  font-size:15px;line-height:1.55;max-width:74ch}
+.note b{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  margin-bottom:6px;color:var(--field-deep)}
+.note p{margin:0 0 10px} .note p:last-child{margin:0}
+.stats{display:flex;flex-wrap:wrap;gap:10px 26px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line-soft);
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stats b{color:var(--ink);font-weight:700;font-size:13px;letter-spacing:.04em;display:block;margin-top:2px}
+.scroll{overflow-x:auto}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 22px 40px;font-family:var(--mono);
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  display:flex;flex-wrap:wrap;gap:10px 26px;justify-content:space-between}
+footer a{color:inherit;text-decoration:none;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body data-palette="#eb6834,#2a78d6,#1baf7a">
+
+<div class="bar">
+  <a href="../index.html#health">&#8249;&nbsp;&nbsp;Back to projects</a>
+  <span class="who">Wearable strain</span>
+</div>
+
+<main>
+  <h1>What the session cost</h1>
+  <p class="sub" id="sub">Unsupervised activity states &middot; strain from movement alone</p>
+
+  <p class="intro">
+    Three inertial units and a chest strap, sampled at 100&nbsp;Hz through a
+    twelve-activity protocol. Every ten-second window is scored for movement
+    intensity, cadence, posture and cardiac response, and then clustered &mdash;
+    with no access to the activity labels &mdash; into three states. Two of them
+    are easy: the body is working, or it is still. The third is the one the
+    labels cannot express. Sitting down before a run and sitting down after one
+    are the same posture, the same near-zero acceleration and the same recorded
+    activity; what separates them is a heart rate still paying off the bout.
+    <b>Recovery is a state you can only see in the biometrics.</b>
+  </p>
+  <p class="intro">
+    The strain number underneath is Banister's TRIMP, which weights every minute
+    by heart-rate reserve under an exponential and so treats a minute near
+    maximum as worth far more than three easy ones. The model then predicts it
+    from the accelerometers and the person's own body &mdash;
+    <b>never from heart rate</b> &mdash; because that is the channel that goes
+    missing when the strap is in a drawer. Scores are leave-one-subject-out:
+    every number below was produced for a person the model had never seen.
+  </p>
+
+  <div class="people" id="people"></div>
+  <p class="who-line" id="whoLine"></p>
+
+  <div class="panel">
+    <div class="hero">
+      <div>
+        <p class="cap">Predicted strain &middot; from movement</p>
+        <div class="big pred" id="predBig">&mdash;</div>
+        <p class="note-sm" id="predNote"></p>
+      </div>
+      <div>
+        <p class="cap">Observed strain &middot; from heart rate</p>
+        <div class="big obs" id="obsBig">&mdash;</div>
+        <p class="note-sm" id="obsNote"></p>
+      </div>
+      <div>
+        <p class="cap">On the 0&ndash;21 scale</p>
+        <svg id="track" viewBox="0 0 460 96" role="img" aria-label="Predicted and observed strain on a 0 to 21 scale"></svg>
+        <p class="note-sm" id="trackNote"></p>
+      </div>
+    </div>
+    <div class="stats" id="heroStats"></div>
+  </div>
+
+  <div class="panel">
+    <h2>The session, minute by minute</h2>
+    <svg id="timeline" viewBox="0 0 960 300" role="img" aria-label="Discovered state and heart rate through the session"></svg>
+    <div class="legend" id="tlLegend"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Strain as it accumulated</h2>
+      <svg id="accum" viewBox="0 0 460 260" role="img" aria-label="Observed and predicted strain accumulating through the session"></svg>
+      <div class="legend">
+        <span><i class="swatch line" style="background:var(--ink)"></i> Observed &middot; heart rate</span>
+        <span><i class="swatch line" style="background:var(--field);opacity:.85"></i> Predicted &middot; movement</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Where the time went</h2>
+      <svg id="budget" viewBox="0 0 460 170" role="img" aria-label="Minutes spent in each discovered state"></svg>
+      <p class="note-sm" id="budgetNote"></p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>By recorded activity</h2>
+    <div class="scroll">
+      <table id="actTable">
+        <thead><tr>
+          <th>Activity</th><th class="n">Minutes</th><th class="n">Mean HR</th>
+          <th class="n">% of reserve</th><th class="n">TRIMP</th><th class="n">Share of strain</th><th>Mostly scored</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <h1 style="margin-top:40px">How the states were found</h1>
+  <p class="sub">Across all nine people &middot; one model, fit once</p>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Recorded activity by discovered state</h2>
+      <div class="scroll"><svg id="heat" role="img" aria-label="Share of each recorded activity's windows falling in each discovered state"></svg></div>
+      <p class="note-sm" id="heatNote"></p>
+    </div>
+    <div class="panel">
+      <h2>Two questions, asked separately</h2>
+      <div id="stages"></div>
+      <svg id="select" viewBox="0 0 440 196" role="img" aria-label="Silhouette score against number of clusters for the single-stage fit"></svg>
+      <p class="note-sm" id="selectNote"></p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>What each state looks like</h2>
+    <div class="scroll">
+      <table id="centTable">
+        <thead><tr>
+          <th>State</th><th class="n">Share of windows</th><th class="n">Ankle SMA (m/s&sup2;)</th>
+          <th class="n">Mean HR</th><th class="n">% of reserve</th><th class="n">HR slope (bpm/min)</th><th class="n">Chest tilt</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="note-sm">Cluster centres in original units. Static and recovery are
+      indistinguishable on movement and posture &mdash; both are a still body &mdash; and
+      separate cleanly on the two cardiac columns.</p>
+  </div>
+
+  <div class="note" id="method"></div>
+</main>
+
+<div class="tip" id="tip"></div>
+
+<footer>
+  <span>© 2026 Trey Chase</span>
+  <span><a href="../index.html">Back to the site</a></span>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var D = __DATA__;
+
+  var CSS = getComputedStyle(document.documentElement);
+  var COLOR = {
+    active:   CSS.getPropertyValue('--active').trim(),
+    static:   CSS.getPropertyValue('--static').trim(),
+    recovery: CSS.getPropertyValue('--recovery').trim()
+  };
+  var INK = CSS.getPropertyValue('--ink').trim();
+  var MUTED = CSS.getPropertyValue('--muted').trim();
+  var FIELD = CSS.getPropertyValue('--field').trim();
+  var LINE = 'rgba(20,32,27,.16)';
+  var STATES = D.states;
+  var NS = 'http://www.w3.org/2000/svg';
+
+  var current = D.subjects[0];
+
+  function el(tag, attrs, text) {
+    var node = document.createElementNS(NS, tag);
+    for (var key in attrs) if (attrs[key] !== null && attrs[key] !== undefined) node.setAttribute(key, attrs[key]);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  function fmt(value, digits) { return Number(value).toFixed(digits === undefined ? 1 : digits); }
+  function title(word) { return word.charAt(0).toUpperCase() + word.slice(1); }
+
+  /* ---- tooltip ------------------------------------------------------- */
+  var tip = document.getElementById('tip');
+  function showTip(event, html) {
+    tip.innerHTML = html;
+    tip.style.opacity = 1;
+    var box = tip.getBoundingClientRect();
+    var x = event.clientX + 14, y = event.clientY - box.height - 12;
+    if (x + box.width > window.innerWidth - 8) x = event.clientX - box.width - 14;
+    if (y < 8) y = event.clientY + 18;
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+  function hideTip() { tip.style.opacity = 0; }
+
+  /* ---- axes ---------------------------------------------------------- */
+  function axis(svg, x1, y1, x2, y2) {
+    svg.appendChild(el('line', { x1: x1, y1: y1, x2: x2, y2: y2, stroke: LINE, 'stroke-width': 1 }));
+  }
+  function tick(svg, x, y, text, anchor, size) {
+    svg.appendChild(el('text', {
+      x: x, y: y, 'text-anchor': anchor || 'middle', fill: MUTED,
+      'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': size || 10
+    }, text));
+  }
+
+  /* ---- the 0-21 track ------------------------------------------------ */
+  function drawTrack(subject) {
+    var svg = document.getElementById('track');
+    clear(svg);
+    var L = 10, R = 450, y = 46, h = 13;
+    var scale = function (v) { return L + (v / 21) * (R - L); };
+
+    svg.appendChild(el('rect', { x: L, y: y, width: R - L, height: h, rx: 4, fill: 'var(--panel)' }));
+    [0, 7, 14, 21].forEach(function (v) {
+      tick(svg, scale(v), y + h + 15, String(v));
+    });
+
+    // Observed is the reference bar; predicted is a marker over it, so the
+    // comparison is a position against a length rather than two lengths.
+    svg.appendChild(el('rect', {
+      x: L, y: y, width: Math.max(2, scale(subject.observed) - L), height: h, rx: 4, fill: INK, opacity: .8
+    }));
+    var px = scale(subject.predicted);
+    svg.appendChild(el('rect', { x: px - 2.5, y: y - 9, width: 5, height: h + 18, rx: 2.5, fill: 'var(--paper)' }));
+    svg.appendChild(el('rect', { x: px - 1.5, y: y - 8, width: 3, height: h + 16, rx: 1.5, fill: FIELD }));
+
+    svg.appendChild(el('text', {
+      x: px, y: y - 14, 'text-anchor': px > 380 ? 'end' : 'middle', fill: FIELD,
+      'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 10.5, 'font-weight': 700
+    }, 'predicted ' + fmt(subject.predicted)));
+    svg.appendChild(el('text', {
+      x: L, y: y + h + 32, fill: MUTED,
+      'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 10.5
+    }, 'observed ' + fmt(subject.observed)));
+  }
+
+  /* ---- session timeline ---------------------------------------------- */
+  function drawTimeline(subject) {
+    var svg = document.getElementById('timeline');
+    clear(svg);
+    var L = 52, R = 940, T = 16, B = 264;
+    var ribbonH = 26, gap = 16;
+    var plotTop = T + ribbonH + gap;
+
+    var minutes = subject.t.map(function (s) { return s / 60; });
+    var tMax = Math.max.apply(null, minutes) + subject.window / 60;
+    var x = function (m) { return L + (m / tMax) * (R - L); };
+    var half = subject.window / 120;      // window centre, in minutes
+
+    var hrLo = Math.min(subject.hrRest - 4, Math.min.apply(null, subject.hr) - 4);
+    var hrHi = Math.max.apply(null, subject.hr) + 6;
+    var y = function (bpm) { return B - ((bpm - hrLo) / (hrHi - hrLo)) * (B - plotTop); };
+
+    // state ribbon
+    var step = subject.stride / 60;
+    for (var i = 0; i < subject.s.length; i++) {
+      var w = Math.max(1, x(minutes[i] + step) - x(minutes[i]));
+      svg.appendChild(el('rect', {
+        x: x(minutes[i]), y: T, width: w + 0.6, height: ribbonH,
+        fill: COLOR[STATES[subject.s[i]]]
+      }));
+    }
+    svg.appendChild(el('rect', { x: L, y: T, width: R - L, height: ribbonH, fill: 'none', stroke: LINE }));
+    tick(svg, L - 8, T + ribbonH / 2 + 4, 'State', 'end', 9.5);
+
+    // heart-rate axis and line
+    axis(svg, L, plotTop, L, B);
+    axis(svg, L, B, R, B);
+    var span = hrHi - hrLo;
+    var stepBpm = span > 90 ? 30 : span > 45 ? 20 : 10;
+    for (var bpm = Math.ceil(hrLo / stepBpm) * stepBpm; bpm <= hrHi; bpm += stepBpm) {
+      svg.appendChild(el('line', { x1: L, y1: y(bpm), x2: R, y2: y(bpm), stroke: 'rgba(20,32,27,.06)' }));
+      tick(svg, L - 8, y(bpm) + 3.5, String(bpm), 'end');
+    }
+    tick(svg, L - 8, plotTop - 8, 'bpm', 'end', 9.5);
+
+    var path = subject.hr.map(function (bpm, i) {
+      return (i ? 'L' : 'M') + fmt(x(minutes[i] + half), 1) + ' ' + fmt(y(bpm), 1);
+    }).join(' ');
+    svg.appendChild(el('path', { d: path, fill: 'none', stroke: INK, 'stroke-width': 2,
+                                 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+
+    for (var m = 0; m <= tMax; m += 10) {
+      tick(svg, x(m), B + 17, String(m));
+    }
+    tick(svg, (L + R) / 2, B + 34, 'minutes into the session', 'middle', 9.5);
+
+    // crosshair
+    var hair = el('line', { x1: L, y1: T, x2: L, y2: B, stroke: FIELD, 'stroke-width': 1, opacity: 0 });
+    var dot = el('circle', { r: 4, fill: FIELD, stroke: 'var(--paper)', 'stroke-width': 2, opacity: 0 });
+    svg.appendChild(hair); svg.appendChild(dot);
+
+    var hit = el('rect', { x: L, y: T, width: R - L, height: B - T, fill: 'transparent' });
+    svg.appendChild(hit);
+    hit.addEventListener('mousemove', function (event) {
+      var box = svg.getBoundingClientRect();
+      var svgX = L + ((event.clientX - box.left) / box.width) * 960 - L;
+      var mins = ((svgX + L - L) / (R - L)) * tMax;
+      var idx = 0, best = Infinity;
+      for (var j = 0; j < minutes.length; j++) {
+        var gapJ = Math.abs(minutes[j] + half - mins);
+        if (gapJ < best) { best = gapJ; idx = j; }
+      }
+      var px = x(minutes[idx] + half);
+      hair.setAttribute('x1', px); hair.setAttribute('x2', px); hair.setAttribute('opacity', .5);
+      dot.setAttribute('cx', px); dot.setAttribute('cy', y(subject.hr[idx])); dot.setAttribute('opacity', 1);
+      var state = STATES[subject.s[idx]];
+      showTip(event,
+        '<b>' + fmt(minutes[idx], 1) + ' min</b> &middot; ' + subject.acts[subject.a[idx]] + '<br>' +
+        title(state) + ' &middot; ' + subject.hr[idx] + ' bpm<br>' +
+        fmt(subject.res[idx] * 100, 0) + '% of reserve');
+    });
+    hit.addEventListener('mouseleave', function () {
+      hair.setAttribute('opacity', 0); dot.setAttribute('opacity', 0); hideTip();
+    });
+  }
+
+  /* ---- strain accumulation ------------------------------------------- */
+  function drawAccum(subject) {
+    var svg = document.getElementById('accum');
+    clear(svg);
+    var L = 40, R = 400, T = 14, B = 214;
+    var minutes = subject.t.map(function (s) { return s / 60; });
+    var tMax = Math.max.apply(null, minutes) + subject.window / 60;
+    var yMax = Math.max(subject.observed, subject.predicted, 1) * 1.18;
+    var x = function (m) { return L + (m / tMax) * (R - L); };
+    var y = function (v) { return B - (v / yMax) * (B - T); };
+
+    axis(svg, L, T, L, B); axis(svg, L, B, R, B);
+    var stepV = yMax > 14 ? 5 : yMax > 7 ? 3 : 2;
+    for (var v = 0; v <= yMax; v += stepV) {
+      svg.appendChild(el('line', { x1: L, y1: y(v), x2: R, y2: y(v), stroke: 'rgba(20,32,27,.06)' }));
+      tick(svg, L - 7, y(v) + 3.5, String(v), 'end');
+    }
+    for (var m = 0; m <= tMax; m += 15) tick(svg, x(m), B + 16, String(m));
+    tick(svg, (L + R) / 2, B + 32, 'minutes', 'middle', 9.5);
+    tick(svg, L - 7, T - 4, 'strain', 'end', 9.5);
+
+    function line(values, color, dash, width) {
+      var d = values.map(function (v, i) {
+        return (i ? 'L' : 'M') + fmt(x(minutes[i] + subject.window / 120), 1) + ' ' + fmt(y(v), 1);
+      }).join(' ');
+      svg.appendChild(el('path', { d: d, fill: 'none', stroke: color, 'stroke-width': width || 2,
+        'stroke-dasharray': dash || null, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    }
+    line(subject.cum, INK);
+    line(subject.pcum, FIELD, '5 4');
+
+    // direct labels at the line ends, so the two are identified without the legend
+    var last = minutes.length - 1;
+    function label(value, color, dy) {
+      svg.appendChild(el('text', {
+        x: x(minutes[last]) + 7, y: y(value) + dy, fill: color,
+        'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 11, 'font-weight': 700
+      }, fmt(value)));
+    }
+    var apart = Math.abs(y(subject.observed) - y(subject.predicted)) < 13;
+    label(subject.observed, INK, apart ? -4 : 4);
+    label(subject.predicted, FIELD, apart ? 12 : 4);
+
+    var hair = el('line', { y1: T, y2: B, stroke: FIELD, 'stroke-width': 1, opacity: 0 });
+    svg.appendChild(hair);
+    var hit = el('rect', { x: L, y: T, width: R - L, height: B - T, fill: 'transparent' });
+    svg.appendChild(hit);
+    hit.addEventListener('mousemove', function (event) {
+      var box = svg.getBoundingClientRect();
+      var mins = (((event.clientX - box.left) / box.width) * 460 - L) / (R - L) * tMax;
+      var idx = Math.max(0, Math.min(minutes.length - 1, Math.round(mins / (subject.stride / 60))));
+      var px = x(minutes[idx] + subject.window / 120);
+      hair.setAttribute('x1', px); hair.setAttribute('x2', px); hair.setAttribute('opacity', .5);
+      showTip(event, '<b>' + fmt(minutes[idx], 1) + ' min</b><br>observed ' + fmt(subject.cum[idx]) +
+        '<br>predicted ' + fmt(subject.pcum[idx]));
+    });
+    hit.addEventListener('mouseleave', function () { hair.setAttribute('opacity', 0); hideTip(); });
+  }
+
+  /* ---- state budget --------------------------------------------------- */
+  function drawBudget(subject) {
+    var svg = document.getElementById('budget');
+    clear(svg);
+    var L = 88, R = 400, top = 18, rowH = 34, barH = 20;
+    var total = STATES.reduce(function (sum, s) { return sum + subject.minutes[s]; }, 0);
+    var max = Math.max.apply(null, STATES.map(function (s) { return subject.minutes[s]; }));
+
+    STATES.forEach(function (state, i) {
+      var y = top + i * rowH;
+      var mins = subject.minutes[state];
+      var w = Math.max(2, (mins / max) * (R - L));
+      var rect = el('rect', { x: L, y: y, width: w, height: barH, rx: 4, fill: COLOR[state] });
+      svg.appendChild(rect);
+      svg.appendChild(el('text', {
+        x: L - 10, y: y + barH / 2 + 4, 'text-anchor': 'end', fill: INK,
+        'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 11
+      }, title(state)));
+      svg.appendChild(el('text', {
+        x: L + w + 9, y: y + barH / 2 + 4, fill: MUTED,
+        'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 11
+      }, fmt(mins) + ' min  ' + fmt(100 * mins / total, 0) + '%'));
+
+      rect.addEventListener('mousemove', function (event) {
+        showTip(event, '<b>' + title(state) + '</b><br>' + fmt(mins) + ' minutes<br>' +
+          fmt(100 * mins / total, 1) + '% of the session');
+      });
+      rect.addEventListener('mouseleave', hideTip);
+    });
+  }
+
+  /* ---- activity table -------------------------------------------------- */
+  function drawActivities(subject) {
+    var body = document.querySelector('#actTable tbody');
+    clear(body);
+    subject.activities.forEach(function (row) {
+      var tr = document.createElement('tr');
+      function cell(text, cls, html) {
+        var td = document.createElement('td');
+        if (cls) td.className = cls;
+        if (html) td.innerHTML = text; else td.textContent = text;
+        tr.appendChild(td);
+      }
+      cell(row.name);
+      cell(fmt(row.minutes), 'n');
+      cell(fmt(row.hr, 0), 'n');
+      cell(fmt(row.reserve * 100, 0) + '%', 'n');
+      cell(fmt(row.trimp), 'n');
+      cell(fmt(row.share * 100, 1) + '%', 'n');
+      cell('<i class="dot" style="background:' + COLOR[row.state] + '"></i>' + title(row.state), null, true);
+      body.appendChild(tr);
+    });
+  }
+
+  /* ---- cohort: contingency heatmap ------------------------------------- */
+  function drawHeat() {
+    var svg = document.getElementById('heat');
+    clear(svg);
+    var rows = D.cohort.contingency;
+    var L = 132, top = 30, cellW = 92, cellH = 25, gap = 2;
+    var width = L + STATES.length * cellW + 14;
+    var height = top + rows.length * cellH + 16;
+    svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+    svg.setAttribute('style', 'min-width:' + Math.max(360, width * 0.72) + 'px');
+
+    STATES.forEach(function (state, c) {
+      svg.appendChild(el('text', {
+        x: L + c * cellW + cellW / 2, y: top - 10, 'text-anchor': 'middle', fill: MUTED,
+        'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 9.5,
+        'letter-spacing': '.1em'
+      }, title(state).toUpperCase()));
+    });
+
+    rows.forEach(function (row, r) {
+      var y = top + r * cellH;
+      svg.appendChild(el('text', {
+        x: L - 10, y: y + cellH / 2 + 4, 'text-anchor': 'end', fill: INK,
+        'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 11
+      }, row.activity));
+
+      STATES.forEach(function (state, c) {
+        var share = row[state];
+        // One hue, light to dark: this is magnitude, not identity.
+        var g = el('rect', {
+          x: L + c * cellW + gap / 2, y: y + gap / 2,
+          width: cellW - gap, height: cellH - gap, rx: 2,
+          fill: FIELD, 'fill-opacity': 0.06 + 0.88 * share
+        });
+        svg.appendChild(g);
+        if (share >= 0.02) {
+          svg.appendChild(el('text', {
+            x: L + c * cellW + cellW / 2, y: y + cellH / 2 + 4, 'text-anchor': 'middle',
+            fill: share > 0.55 ? '#ECEFE6' : INK,
+            'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 10.5
+          }, Math.round(share * 100) + '%'));
+        }
+        g.addEventListener('mousemove', function (event) {
+          showTip(event, '<b>' + row.activity + '</b><br>' + fmt(share * 100, 1) +
+            '% scored ' + state + '<br>' + fmt(row.minutes) + ' min recorded');
+        });
+        g.addEventListener('mouseleave', hideTip);
+      });
+    });
+  }
+
+  /* ---- cohort: the two stages ------------------------------------------ */
+  function drawStages() {
+    var box = document.getElementById('stages');
+    box.innerHTML = '';
+    [[D.cohort.stage1, '1', 'Is the body doing mechanical work?', 'movement features', 'active / still'],
+     [D.cohort.stage2, '2', 'Is the heart still paying for it?', 'cardiac features', 'static / recovery']
+    ].forEach(function (row) {
+      var stage = row[0];
+      var div = document.createElement('div');
+      div.style.cssText = 'padding:10px 0;border-bottom:1px solid var(--line-soft)';
+      div.innerHTML =
+        '<div style="font-family:var(--mono);font-size:11.5px;color:var(--ink);font-weight:700">' +
+          'Stage ' + row[1] + ' &middot; ' + row[2] + '</div>' +
+        '<div style="font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.7">' +
+          'k = 2 on ' + row[3] + ' &rarr; ' + row[4] + '<br>' +
+          stage.n.toLocaleString() + ' windows &middot; silhouette ' + fmt(stage.silhouette, 3) +
+          ' &middot; mixture agrees at ARI ' + fmt(stage.gmm_ari, 2) +
+        '</div>';
+      box.appendChild(div);
+    });
+  }
+
+  /* ---- cohort: model selection ---------------------------------------- */
+  function drawSelect() {
+    var svg = document.getElementById('select');
+    clear(svg);
+    var points = D.cohort.selection;
+    var L = 46, R = 404, T = 30, B = 146;
+    var ks = points.map(function (p) { return p.k; });
+    var kMin = Math.min.apply(null, ks), kMax = Math.max.apply(null, ks);
+    var values = points.map(function (p) { return p.silhouette; });
+    var lo = Math.min.apply(null, values) * 0.9, hi = Math.max.apply(null, values) * 1.06;
+    var x = function (k) { return L + ((k - kMin) / (kMax - kMin)) * (R - L); };
+    var y = function (v) { return B - ((v - lo) / (hi - lo)) * (B - T); };
+
+    axis(svg, L, T, L, B); axis(svg, L, B, R, B);
+    points.forEach(function (p) { tick(svg, x(p.k), B + 16, String(p.k)); });
+    tick(svg, (L + R) / 2, B + 33, 'clusters (k), single-stage fit', 'middle', 9.5);
+    // above the axis, left-aligned: anchoring it to the axis end ran it off the canvas
+    tick(svg, 2, 12, 'silhouette', 'start', 9.5);
+    [lo, (lo + hi) / 2, hi].forEach(function (v) { tick(svg, L - 7, y(v) + 3.5, fmt(v, 2), 'end'); });
+
+    svg.appendChild(el('path', {
+      d: points.map(function (p, i) { return (i ? 'L' : 'M') + fmt(x(p.k), 1) + ' ' + fmt(y(p.silhouette), 1); }).join(' '),
+      fill: 'none', stroke: MUTED, 'stroke-width': 2
+    }));
+    points.forEach(function (p) {
+      var chosen = p.k === 3;
+      var c = el('circle', {
+        cx: x(p.k), cy: y(p.silhouette), r: chosen ? 6 : 4.5,
+        fill: chosen ? FIELD : 'var(--paper)', stroke: chosen ? 'var(--paper)' : MUTED, 'stroke-width': 2
+      });
+      svg.appendChild(c);
+      c.addEventListener('mousemove', function (event) {
+        showTip(event, '<b>k = ' + p.k + '</b><br>silhouette ' + fmt(p.silhouette, 3) + '<br>GMM BIC ' + fmt(p.bic, 0));
+      });
+      c.addEventListener('mouseleave', hideTip);
+    });
+    var chosenPoint = points.filter(function (p) { return p.k === 3; })[0];
+    if (chosenPoint) {
+      svg.appendChild(el('text', {
+        x: x(chosenPoint.k), y: y(chosenPoint.silhouette) - 14, 'text-anchor': 'middle', fill: FIELD,
+        'font-family': 'ui-monospace,SFMono-Regular,Menlo,monospace', 'font-size': 10.5, 'font-weight': 700
+      }, 'k = 3'));
+    }
+  }
+
+  /* ---- cohort: centroid table ------------------------------------------ */
+  function drawCentroids() {
+    var body = document.querySelector('#centTable tbody');
+    clear(body);
+    D.cohort.centroids.forEach(function (row) {
+      var tr = document.createElement('tr');
+      function cell(text, cls, html) {
+        var td = document.createElement('td');
+        if (cls) td.className = cls;
+        if (html) td.innerHTML = text; else td.textContent = text;
+        tr.appendChild(td);
+      }
+      cell('<i class="dot" style="background:' + COLOR[row.state] + '"></i>' + title(row.state), null, true);
+      cell(fmt(row.share * 100, 1) + '%', 'n');
+      cell(fmt(row.sma, 2), 'n');
+      cell(fmt(row.hr, 0), 'n');
+      cell(fmt(row.reserve * 100, 0) + '%', 'n');
+      cell((row.slope > 0 ? '+' : '') + fmt(row.slope), 'n');
+      cell(fmt(row.tilt, 0) + '°', 'n');
+      body.appendChild(tr);
+    });
+  }
+
+  /* ---- legends and copy ------------------------------------------------ */
+  function drawLegend() {
+    var box = document.getElementById('tlLegend');
+    clear(box);
+    STATES.forEach(function (state) {
+      var span = document.createElement('span');
+      span.innerHTML = '<i class="swatch" style="background:' + COLOR[state] + '"></i> ' + title(state);
+      box.appendChild(span);
+    });
+    var hr = document.createElement('span');
+    hr.innerHTML = '<i class="swatch line" style="background:' + INK + '"></i> Heart rate';
+    box.appendChild(hr);
+  }
+
+  function paintHero(subject) {
+    document.getElementById('predBig').innerHTML = fmt(subject.predicted) + '<span class="of"> / 21</span>';
+    document.getElementById('obsBig').innerHTML = fmt(subject.observed) + '<span class="of"> / 21</span>';
+    var delta = subject.predicted - subject.observed;
+    document.getElementById('predNote').innerHTML =
+      'Accelerometers, posture and body only. This person was held out of the fit.';
+    document.getElementById('obsNote').innerHTML =
+      fmt(subject.trimp, 1) + ' TRIMP over ' + fmt(subject.durationMin, 0) + ' minutes.';
+    document.getElementById('trackNote').innerHTML =
+      (Math.abs(delta) < 0.05 ? 'The two agree.' :
+        'Movement ' + (delta > 0 ? 'over' : 'under') + '-reads the heart by ' +
+        fmt(Math.abs(delta)) + ' of strain.');
+
+    var stats = document.getElementById('heroStats');
+    clear(stats);
+    [['Peak heart rate', subject.peakHr + ' bpm'],
+     ['Resting / max', subject.hrRest + ' / ' + subject.hrMax + ' bpm'],
+     ['Time active', fmt(subject.minutes.active) + ' min'],
+     ['Time recovering', fmt(subject.minutes.recovery) + ' min'],
+     ['Windows scored', String(subject.t.length)]
+    ].forEach(function (pair) {
+      var span = document.createElement('span');
+      span.innerHTML = pair[0] + '<b>' + pair[1] + '</b>';
+      stats.appendChild(span);
+    });
+
+    document.getElementById('whoLine').innerHTML =
+      subject.label + ' &middot; ' + subject.sex + ', ' + subject.age + ' &middot; ' +
+      subject.height + ' cm, ' + subject.weight + ' kg &middot; resting ' + subject.hrRest +
+      ' bpm, max ' + subject.hrMax + ' bpm';
+
+    document.getElementById('budgetNote').innerHTML =
+      'Recovery is time the accelerometers call still and the heart does not. ' +
+      'For ' + subject.label.toLowerCase() + ' that is ' +
+      fmt(100 * subject.minutes.recovery / (subject.minutes.active + subject.minutes.static + subject.minutes.recovery), 0) +
+      '% of the session.';
+  }
+
+  function select(subject) {
+    current = subject;
+    Array.prototype.forEach.call(document.querySelectorAll('#people button'), function (button) {
+      button.classList.toggle('on', button.dataset.id === subject.id);
+    });
+    paintHero(subject);
+    drawTrack(subject);
+    drawTimeline(subject);
+    drawAccum(subject);
+    drawBudget(subject);
+    drawActivities(subject);
+  }
+
+  function buildPeople() {
+    var box = document.getElementById('people');
+    D.subjects.forEach(function (subject) {
+      var button = document.createElement('button');
+      button.textContent = subject.label;
+      button.dataset.id = subject.id;
+      button.addEventListener('click', function () { select(subject); });
+      box.appendChild(button);
+    });
+  }
+
+  function writeCopy() {
+    var c = D.cohort;
+
+    var split = c.sittingSplit;
+    document.getElementById('heatNote').innerHTML =
+      'Each row is one recorded activity and sums to 100%. The row to watch is ' +
+      '<b>sitting</b>: the same posture, the same activity id and the same near-zero ' +
+      'acceleration throughout, and the clustering still cuts it ' +
+      fmt((split.static || 0) * 100, 0) + ' / ' + fmt((split.recovery || 0) * 100, 0) +
+      ' between static and recovery. Nothing in the dataset marks where that line falls. ' +
+      'Lying and standing land wholly in static, which is the intended behaviour: posture ' +
+      'was held out of the fit, so a still body is a still body whatever shape it is in.';
+    document.getElementById('sub').innerHTML =
+      c.nWindows.toLocaleString() + ' windows &middot; ' + D.subjects.length + ' people &middot; ' +
+      D.activities + ' activities &middot; ' + D.source;
+
+    var flatCentres = c.flat.centres.map(function (row) { return fmt(row.sma_ankle, 1); }).join(' / ');
+    document.getElementById('selectNote').innerHTML =
+      'The curve is the <em>single-stage</em> fit &mdash; one k-means over movement and cardiac ' +
+      'features together &mdash; and it is here to show what this project does not do. At k = 3 it ' +
+      'orders its clusters by intensity (mean ankle SMA ' + flatCentres + ' m/s&sup2;) and leaves ' +
+      fmt(c.flat.stillInOneCluster * 100, 0) + '% of all windows in a single still cluster, so ' +
+      'baseline and recovery are never separated. Splitting the two questions apart is what ' +
+      'recovers the third state.';
+
+    document.getElementById('method').innerHTML =
+      '<b>Method, and what this is built on</b>' +
+      '<p>Ten-second windows at half overlap, dropped where they straddle a change of ' +
+      'activity. Movement features (intensity, cadence, jerk, spectral shape) and cardiac ' +
+      'features (heart-rate reserve and its slope) are standardised within block and ' +
+      'down-weighted by the square root of the block&rsquo;s width. The split is made in two ' +
+      'stages, k = 2 each, on the block of features that defines it: movement separates active ' +
+      'from still, then cardiac separates static from recovery among the still windows alone. ' +
+      'Posture is computed and reported but never fitted on &mdash; it is a large, clean ' +
+      'lying-versus-upright split that costs a whole cluster and answers a question this ' +
+      'taxonomy does not ask. Both stages are unsupervised; the clusters are named afterwards ' +
+      'from where their centres sit in original units, never from the activity labels. ' +
+      'Agreement with the recorded activity is ARI ' + fmt(c.ariActivity, 2) + ', which is low ' +
+      'by design: the states deliberately pool eight kinds of movement into one and cut a ' +
+      'single recorded activity in two.</p>' +
+      '<p>Strain is Banister TRIMP mapped onto a 0&ndash;21 display scale by a fixed log curve ' +
+      '(300 TRIMP anchors 21). The 0&ndash;21 range is a presentation convention borrowed from ' +
+      'consumer wearables and is not a validated clinical instrument &mdash; TRIMP underneath it is ' +
+      'the quantity with literature behind it. The predictor is a ' + c.model.chosen +
+      ' model on movement, posture, state mix and body composition, scored leave-one-subject-out: ' +
+      'R&sup2; ' + fmt(c.model.r2, 3) + ' on the per-window rate, and session strain landing within ' +
+      fmt(c.model.sessionMae, 2) + ' of observed on average (worst person ' +
+      fmt(c.model.sessionMax, 2) + ').</p>' +
+      '<p>' + D.provenanceNote + '</p>';
+  }
+
+  buildPeople();
+  writeCopy();
+  drawStages();
+  drawLegend();
+  drawHeat();
+  drawSelect();
+  drawCentroids();
+  select(D.subjects[0]);
+  window.addEventListener('resize', function () { select(current); });
+})();
+</script>
+</body>
+</html>
